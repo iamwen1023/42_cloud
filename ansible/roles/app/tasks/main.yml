@@ -1,0 +1,142 @@
+---
+- name: Create project and data directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ project_dir }}"
+    - "{{ data_dir }}"
+    - "{{ data_dir }}/database"
+    - "{{ data_dir }}/wordpress"
+
+- name: Ensure ownership on WordPress data directory (www-data 33:33)
+  file:
+    path: "{{ data_dir }}/wordpress"
+    owner: '33'
+    group: '33'
+    recurse: yes
+
+- name: Ensure ownership on MariaDB data directory (mysql 100:100)
+  file:
+    path: "{{ data_dir }}/database"
+    owner: '100'
+    group: '100'
+    recurse: yes
+
+- name: Copy project files
+  synchronize:
+    src: "{{ playbook_dir }}/.."
+    dest: "{{ project_dir }}"
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=ansible/.venv"
+
+- name: Template .env
+  copy:
+    dest: "{{ project_dir }}/srcs/.env"
+    content: |
+      SQL_DATABASE={{ SQL_DATABASE | default('wordpress') }}
+      SQL_USER={{ SQL_USER | default('wp_user') }}
+      SQL_PASSWORD={{ SQL_PASSWORD | default('change_me_strong') }}
+      SQL_ROOT_PASSWORD={{ SQL_ROOT_PASSWORD | default('change_me_root_strong') }}
+      WORDPRESS_URL={{ WORDPRESS_URL | default('https://example.com') }}
+      WORDPRESS_TITLE={{ WORDPRESS_TITLE | default('My Site') }}
+      WORDPRESS_AMD_USER={{ WORDPRESS_AMD_USER | default('admin') }}
+      WORDPRESS_AMD_USER_PSW={{ WORDPRESS_AMD_USER_PSW | default('change_me_admin_strong') }}
+      ADMIN_EMAIL={{ ADMIN_EMAIL | default('admin@example.com') }}
+      DATA_DIR={{ data_dir }}
+    mode: '0600'
+
+- name: Docker compose down (ignore errors)
+  shell: |
+    set -e
+    cd {{ project_dir }}/srcs
+    docker compose down -v || true
+
+- name: Docker compose build (stream logs)
+  environment:
+    DOCKER_BUILDKIT: "1"
+    COMPOSE_DOCKER_CLI_BUILD: "1"
+  args:
+    executable: /bin/bash
+  shell: |
+    set -e
+    cd {{ project_dir }}/srcs
+    docker compose build --progress=plain 2>&1 | cat
+
+- name: Remove potentially conflicting named volumes (idempotent)
+  args:
+    executable: /bin/bash
+  shell: |
+    set -e
+    # Remove old volumes that may conflict with updated compose volume definitions
+    docker volume rm srcs_database srcs_wordpress 2>/dev/null || true
+
+- name: Docker compose up -d (no wait)
+  args:
+    executable: /bin/bash
+  shell: |
+    set -e
+    cd {{ project_dir }}/srcs
+    docker compose up -d --force-recreate -V 2>&1 | cat
+
+- block:
+    - name: Wait for services to be healthy - mariadb
+      args:
+        chdir: "{{ project_dir }}/srcs"
+        executable: /bin/bash
+      shell: |
+        set -e
+        CID=$(docker compose ps -q mariadb)
+        [ -n "$CID" ] && docker inspect -f '{{"{{"}}.State.Health.Status{{"}}"}}' "$CID" | grep -q healthy
+      register: mariadb_health
+      retries: 40
+      delay: 3
+      until: mariadb_health.rc == 0
+  rescue:
+    - name: Show mariadb logs on failure
+      args:
+        chdir: "{{ project_dir }}/srcs"
+      shell: docker compose logs --tail=300 mariadb | cat
+    - name: Show mariadb container status
+      args:
+        chdir: "{{ project_dir }}/srcs"
+      shell: docker compose ps mariadb | cat
+    - name: Fail with mariadb health check error
+      fail:
+        msg: "MariaDB health check failed after 40 retries"
+
+- name: Wait for services to be healthy - wordpress
+  args:
+    chdir: "{{ project_dir }}/srcs"
+    executable: /bin/bash
+  shell: |
+    set -e
+    CID=$(docker compose ps -q wordpress)
+    [ -n "$CID" ] && docker inspect -f '{{"{{"}}.State.Health.Status{{"}}"}}' "$CID" | grep -q healthy
+  register: wp_health
+  retries: 40
+  delay: 3
+  until: wp_health.rc == 0
+
+- name: Show compose status
+  shell: |
+    cd {{ project_dir }}/srcs && docker compose ps
+  register: compose_ps
+  changed_when: false
+
+- name: Tail logs for 90s (non-blocking feel)
+  args:
+    executable: /bin/bash
+  shell: |
+    set -e
+    cd {{ project_dir }}/srcs
+    timeout 30s docker compose logs -f --tail=100 2>&1 | cat || true
+  changed_when: false
+  async: 1
+  poll: 0
+
+- name: Show services
+  debug:
+    var: compose_ps.stdout

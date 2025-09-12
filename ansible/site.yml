@@ -1,0 +1,9 @@
+---
+- hosts: all
+  become: true
+  vars:
+    project_dir: /opt/42_cloud1
+    data_dir: /root/data
+  roles:
+    - docker
+    - app

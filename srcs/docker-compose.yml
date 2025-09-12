@@ -1,0 +1,79 @@
+
+services:
+  mariadb:
+    build: ./mariadb
+    env_file:
+      - .env
+    environment:
+      - SQL_DATABASE=${SQL_DATABASE}
+      - SQL_USER=${SQL_USER}
+      - SQL_PASSWORD=${SQL_PASSWORD}
+      - SQL_ROOT_PASSWORD=${SQL_ROOT_PASSWORD}
+      - MARIADB_ROOT_PASSWORD=${SQL_ROOT_PASSWORD}
+    expose:
+      - 3306
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h127.0.0.1 -uroot -p$SQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - database:/var/lib/mysql
+    networks:
+      - inception
+  nginx:
+    build: ./nginx
+    depends_on:
+      wordpress:
+        condition: service_started
+    ports:
+      ["80:80"]
+    volumes:
+      - wordpress:/var/www/wordpress
+    networks:
+      - inception
+  wordpress:
+    build: ./wordpress
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wp core is-installed --path=/var/www/wordpress || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    environment:
+      - SQL_DATABASE=${SQL_DATABASE}
+      - SQL_USER=${SQL_USER}
+      - SQL_PASSWORD=${SQL_PASSWORD}
+      - SQL_ROOT_PASSWORD=${SQL_ROOT_PASSWORD}
+      - WORDPRESS_URL=${WORDPRESS_URL} 
+      - WORDPRESS_TITLE=${WORDPRESS_TITLE}
+      - WORDPRESS_AMD_USER=${WORDPRESS_AMD_USER}
+      - WORDPRESS_AMD_USER_PSW=${WORDPRESS_AMD_USER_PSW}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+    expose:
+      - 9000
+    volumes:
+      - wordpress:/var/www/wordpress
+    networks:
+      - inception
+networks:
+  inception:
+    driver: bridge
+volumes:
+  database:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_DIR}/database
+  wordpress:
+    driver: local
+    driver_opts: 
+      type: none
+      o: bind
+      device: ${DATA_DIR}/wordpress
