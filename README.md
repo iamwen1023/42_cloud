@@ -1,69 +1,95 @@
-# 42 Cloud Automated WordPress Deployment
+## 42 Cloud – WordPress on Docker with Ansible
 
-This project deploys a TLS-enabled WordPress with MariaDB, Nginx, and phpMyAdmin using Docker Compose, and provides an Ansible playbook to fully automate provisioning on Ubuntu 20.04+ hosts over SSH.
+This repo provisions a WordPress stack (Nginx + PHP-FPM + MariaDB) with Docker Compose and automates remote deployment via Ansible.
 
-## Prerequisites
+### Architecture (concepts)
+- Nginx serves HTTP on port 80 and proxies PHP to `wordpress:9000`.
+- WordPress runs PHP-FPM; configuration is automated by `srcs/wordpress/tools/auto_config.sh` using WP-CLI.
+- MariaDB stores the application database. First-run initialization creates DB and user.
+- Bind mounts persist data on the host (`DATA_DIR`), so container rebuilds don’t lose content.
+- Health checks: MariaDB is healthy when it accepts `mysqladmin ping`; WordPress is healthy when `wp core is-installed` succeeds. Ansible waits on these.
 
-- Ubuntu 20.04 LTS target with SSH and Python installed
-- Your user has sudo privileges (password or NOPASSWD)
-- Ansible installed on your control machine
+### Directory layout
+- `srcs/`: Dockerfiles, compose file, service configs
+- `ansible/`: Playbook, roles, and deployment tasks
+- `ansible/roles/app/tasks/main.yml`: copies project, writes remote `.env`, builds and starts stack
 
-## Quick start (local)
+### Local run (optional)
+1) Create data dirs and local `.env` in `srcs/` (example keys below).
+2) Start:
+```
+cd srcs
+docker compose up -d --build
+```
+3) Visit `http://localhost` (or the mapped port if you changed it).
 
-1. Copy `.env.example` to `.env` and fill in values.
-2. Create bind-mount directories:
-   - `/home/wlo/data/database`
-   - `/home/wlo/data/wordpress`
-3. Build and start:
-   - `make build && make up`
-4. Visit `https://<your-host>`
-   - WordPress served at `/`
-   - phpMyAdmin at `/phpmyadmin/`
+### Environment variables (remote .env is templated by Ansible)
+- Required:
+  - `SQL_DATABASE`, `SQL_USER`, `SQL_PASSWORD`, `SQL_ROOT_PASSWORD`
+  - `WORDPRESS_URL`, `WORDPRESS_TITLE`, `WORDPRESS_AMD_USER`, `WORDPRESS_AMD_USER_PSW`, `ADMIN_EMAIL`
+  - `DATA_DIR` (host path for bind mounts; default via Ansible is `/root/data` or set to `/var/lib/42_cloud1`)
 
-## Ansible automated deployment
+### Remote deployment (Ansible)
+Prereqs on your control machine: Ansible installed; SSH access to Ubuntu host with sudo.
 
-Inventory example (`inventory.ini`):
-
+1) Create `ansible/inventory.ini` (do NOT commit secrets):
 ```
 [web]
-your_server_ip ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
+server1 ansible_host=<IP> ansible_user=root ansible_python_interpreter=/usr/bin/python3
+
+[web:vars]
+SQL_DATABASE=wordpress
+SQL_USER=wp_user
+SQL_PASSWORD=ChangeMe_WpDb_123
+SQL_ROOT_PASSWORD=ChangeMe_Root_123
+WORDPRESS_URL=http://<IP>
+WORDPRESS_TITLE=My Local Blog
+WORDPRESS_AMD_USER=admin
+WORDPRESS_AMD_USER_PSW=ChangeMe_Admin_123
+ADMIN_EMAIL=admin@example.com
+DATA_DIR=/root/data
 ```
 
-Run:
-
+2) Deploy:
 ```
-ansible-playbook -i inventory.ini ansible/site.yml
+cd ansible
+ansible-playbook -i inventory.ini site.yml
 ```
 
-The playbook will:
-- Install Docker, Docker Compose, and dependencies
-- Push project files and `.env` variables
-- Create data directories
-- Build images and bring up the stack
+3) Verify on the host:
+```
+ssh root@<IP>
+cd /opt/42_cloud1/srcs
+docker compose ps
+curl -I http://127.0.0.1
+```
 
-## Services
+### Common operations
+- Show logs:
+```
+cd /opt/42_cloud1/srcs && docker compose logs --tail=200 nginx wordpress mariadb
+```
+- Recreate everything (DESTROYS DATA):
+```
+cd /opt/42_cloud1/srcs && docker compose down -v
+```
+- Remote cleanup (from control machine):
+```
+ansible all -i ansible/inventory.ini -b -m shell -a "bash -lc 'cd /opt/42_cloud1/srcs && docker compose down -v || true; \
+docker ps -aq | xargs -r docker rm -f; docker volume prune -f; docker image prune -af'"
+```
 
-- Nginx: TLS reverse proxy (443)
-- WordPress: PHP-FPM (internal 9000)
-- MariaDB: internal only (3306)
-- phpMyAdmin: internal, proxied at `/phpmyadmin/`
+### Troubleshooting
+- WordPress exits with DB error 1130 (host not allowed): ensure MariaDB grants include `%` host and DB exists. Example inside DB container:
+```
+mysql -uroot -p"$SQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS \`$SQL_DATABASE\`; \
+CREATE USER IF NOT EXISTS \`$SQL_USER\`@'%' IDENTIFIED BY '$SQL_PASSWORD'; \
+GRANT ALL PRIVILEGES ON \`$SQL_DATABASE\`.* TO \`$SQL_USER\`@'%'; FLUSH PRIVILEGES;"
+```
+- Port 80 conflicts: stop host services `apache2`/`nginx`, or change compose port mapping.
+- Health waits: Ansible prints logs on failure (MariaDB and WordPress) to aid debugging.
 
-# 42_cloud
-
-
-
-docker compose down -v --remove-orphans 2>/dev/null || true
-
-docker ps -aq | xargs -r docker rm -fv
-
-docker images -aq | xargs -r docker rmi -f
-
-docker volume ls -q | xargs -r docker volume rm -f
-
-docker network ls -q | grep -vE '^(bridge|host|none)$' | xargs -r docker network rm
-
-
-docker builder prune -af
-docker system prune -af --volumes
-
-sudo systemctl restart docker
+### Security notes
+- Keep `ansible/inventory.ini` out of Git (add to `.gitignore`). Commit a redacted `inventory.sample.ini` for reference.
+- Prefer `/var/lib/42_cloud1` or `/srv/42_cloud1` for `DATA_DIR` in production.
+- Expose only Nginx (80); keep MariaDB internal to the Docker network.
