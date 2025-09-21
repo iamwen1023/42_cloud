@@ -10,7 +10,12 @@ RUN apt-get update -y && \
 RUN mkdir -p /var/run/nginx /var/www/wordpress
 
 COPY conf/nginx.conf /etc/nginx/nginx.conf
+COPY tools/create_htpasswd.sh /usr/local/bin/create_htpasswd.sh
 
 RUN chmod 755 /var/www && chown -R www-data:www-data /var/www
+RUN chmod +x /usr/local/bin/create_htpasswd.sh
+
+# Create htpasswd file for PHP-MyAdmin authentication
+RUN /usr/local/bin/create_htpasswd.sh
 
 CMD [ "nginx", "-g", "daemon off;" ]

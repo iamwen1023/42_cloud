@@ -93,3 +93,44 @@ GRANT ALL PRIVILEGES ON \`$SQL_DATABASE\`.* TO \`$SQL_USER\`@'%'; FLUSH PRIVILEG
 - Keep `ansible/inventory.ini` out of Git (add to `.gitignore`). Commit a redacted `inventory.sample.ini` for reference.
 - Prefer `/var/lib/42_cloud1` or `/srv/42_cloud1` for `DATA_DIR` in production.
 - Expose only Nginx (80); keep MariaDB internal to the Docker network.
+
+### TLS/HTTPS (production)
+For production, enable TLS on Nginx:
+
+1) Install certbot and obtain a certificate:
+```
+ssh root@<IP>
+apt update && apt install -y certbot
+certbot certonly --standalone -d <your-domain>
+```
+
+2) Update `srcs/nginx/conf/nginx.conf` to include SSL:
+```
+server {
+    listen 80;
+    server_name <your-domain>;
+    return 301 https://$server_name$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name <your-domain>;
+    ssl_certificate /etc/letsencrypt/live/<your-domain>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<your-domain>/privkey.pem;
+    # ... rest of your config
+}
+```
+
+3) Mount certs in `srcs/docker-compose.yml`:
+```
+nginx:
+  volumes:
+    - wordpress:/var/www/wordpress
+    - /etc/letsencrypt:/etc/letsencrypt:ro
+```
+
+4) Update `WORDPRESS_URL=https://<your-domain>` in inventory and redeploy.
+
+5) Set up auto-renewal:
+```
+echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
+```

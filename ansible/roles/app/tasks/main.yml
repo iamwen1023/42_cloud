@@ -45,8 +45,26 @@
       WORDPRESS_AMD_USER={{ WORDPRESS_AMD_USER | default('admin') }}
       WORDPRESS_AMD_USER_PSW={{ WORDPRESS_AMD_USER_PSW | default('change_me_admin_strong') }}
       ADMIN_EMAIL={{ ADMIN_EMAIL | default('admin@example.com') }}
+      PHPMYADMIN_USER={{ PHPMYADMIN_USER | default('admin') }}
+      PHPMYADMIN_PASSWORD={{ PHPMYADMIN_PASSWORD | default('change_me_admin_strong') }}
       DATA_DIR={{ data_dir }}
     mode: '0600'
+
+- name: Create SSL certificate directory
+  file:
+    path: /etc/ssl/self-signed
+    state: directory
+    mode: '0755'
+
+- name: Generate self-signed SSL certificate
+  shell: |
+    cd /etc/ssl/self-signed
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout privkey.pem \
+      -out fullchain.pem \
+      -subj '/C=US/ST=State/L=City/O=Organization/CN={{ ansible_host }}'
+  args:
+    creates: /etc/ssl/self-signed/fullchain.pem
 
 - name: Docker compose down (ignore errors)
   shell: |

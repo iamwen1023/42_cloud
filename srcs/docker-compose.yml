@@ -28,10 +28,15 @@ services:
     depends_on:
       wordpress:
         condition: service_started
+    environment:
+      - PHPMYADMIN_USER=${PHPMYADMIN_USER}
+      - PHPMYADMIN_PASSWORD=${PHPMYADMIN_PASSWORD}
     ports:
-      ["80:80"]
+      - "80:80"
+      - "443:443"
     volumes:
       - wordpress:/var/www/wordpress
+      - /etc/ssl/self-signed:/etc/ssl/self-signed:ro
     networks:
       - inception
   wordpress:
@@ -61,6 +66,21 @@ services:
       - wordpress:/var/www/wordpress
     networks:
       - inception
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    environment:
+      - PMA_HOST=mariadb
+      - PMA_PORT=3306
+      - PMA_USER=${SQL_USER}
+      - PMA_PASSWORD=${SQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${SQL_ROOT_PASSWORD}
+    expose:
+      - 80
+    networks:
+      - inception
 networks:
   inception:
     driver: bridge
@@ -77,3 +97,5 @@ volumes:
       type: none
       o: bind
       device: ${DATA_DIR}/wordpress
+  certbot_webroot:
+    driver: local
