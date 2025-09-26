@@ -37,18 +37,6 @@ Prereqs on your control machine: Ansible installed; SSH access to Ubuntu host wi
 [web]
 server1 ansible_host=<IP> ansible_user=root ansible_python_interpreter=/usr/bin/python3
 
-[web:vars]
-SQL_DATABASE=wordpress
-SQL_USER=wp_user
-SQL_PASSWORD=ChangeMe_WpDb_123
-SQL_ROOT_PASSWORD=ChangeMe_Root_123
-WORDPRESS_URL=http://<IP>
-WORDPRESS_TITLE=My Local Blog
-WORDPRESS_AMD_USER=admin
-WORDPRESS_AMD_USER_PSW=ChangeMe_Admin_123
-ADMIN_EMAIL=admin@example.com
-DATA_DIR=/root/data
-```
 
 2) Deploy:
 ```
@@ -134,3 +122,28 @@ nginx:
 ```
 echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
 ```
+
+login mariadb:
+docker exec -it srcs-mariadb-1 bash
+mysql -uroot -p
+SHOW DATABASES;
+USE wordpress; (replace with your DB name)
+SHOW TABLES;
+
+
+
+Stop and remove all containers, networks, anonymous volumes:
+docker ps -aq | xargs -r docker stop
+docker ps -aq | xargs -r docker rm -f
+docker network ls -q | xargs -r docker network rm
+Remove persisted data and project dir:
+rm -rf /root/data /opt/42_cloud1
+Optional (forces fresh images):
+docker images -q | xargs -r docker rmi -f
+docker volume ls -q | xargs -r docker volume rm -f
+
+
+# Stop stack:
+docker compose -f /opt/42_cloud1/srcs/docker-compose.yml -p inception down
+# Wipe persisted data:
+sudo rm -rf /root/data/database /root/data/wordpress

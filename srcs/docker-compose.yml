@@ -34,6 +34,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    restart: always
     volumes:
       - wordpress:/var/www/wordpress
       - /etc/ssl/self-signed:/etc/ssl/self-signed:ro
@@ -62,6 +63,7 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL}
     expose:
       - 9000
+    restart: always
     volumes:
       - wordpress:/var/www/wordpress
     networks:
@@ -79,6 +81,7 @@ services:
       - MYSQL_ROOT_PASSWORD=${SQL_ROOT_PASSWORD}
     expose:
       - 80
+    restart: always
     networks:
       - inception
 networks:

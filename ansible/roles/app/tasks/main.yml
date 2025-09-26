@@ -10,14 +10,14 @@
     - "{{ data_dir }}/database"
     - "{{ data_dir }}/wordpress"
 
-- name: Ensure ownership on WordPress data directory (www-data 33:33)
+- name: Ensure ownership on WordPress data directory (www-data 33:33 Debian images)
   file:
     path: "{{ data_dir }}/wordpress"
     owner: '33'
     group: '33'
     recurse: yes
 
-- name: Ensure ownership on MariaDB data directory (mysql 100:100)
+- name: Ensure ownership on MariaDB data directory (mysql 100:100 Debian images)
   file:
     path: "{{ data_dir }}/database"
     owner: '100'
@@ -74,8 +74,8 @@
 
 - name: Docker compose build (stream logs)
   environment:
-    DOCKER_BUILDKIT: "1"
-    COMPOSE_DOCKER_CLI_BUILD: "1"
+    DOCKER_BUILDKIT: "1" # Enable Docker BuildKit for faster builds
+    COMPOSE_DOCKER_CLI_BUILD: "1" # Enable Docker Compose CLI build
   args:
     executable: /bin/bash
   shell: |
@@ -125,18 +125,52 @@
       fail:
         msg: "MariaDB health check failed after 40 retries"
 
-- name: Wait for services to be healthy - wordpress
+- name: Write DB init SQL to host
+  copy:
+    dest: "{{ project_dir }}/srcs/init_app.sql"
+    mode: '0600'
+    content: |
+      CREATE DATABASE IF NOT EXISTS `{{ SQL_DATABASE }}` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+      CREATE USER IF NOT EXISTS `{{ SQL_USER }}`@'%' IDENTIFIED BY '{{ SQL_PASSWORD }}';
+      GRANT ALL PRIVILEGES ON `{{ SQL_DATABASE }}`.* TO `{{ SQL_USER }}`@'%';
+      FLUSH PRIVILEGES;
+
+- name: Copy SQL into MariaDB container and apply grants
   args:
     chdir: "{{ project_dir }}/srcs"
     executable: /bin/bash
   shell: |
     set -e
-    CID=$(docker compose ps -q wordpress)
-    [ -n "$CID" ] && docker inspect -f '{{"{{"}}.State.Health.Status{{"}}"}}' "$CID" | grep -q healthy
-  register: wp_health
-  retries: 40
-  delay: 3
-  until: wp_health.rc == 0
+    CID=$(docker compose ps -q mariadb)
+    docker cp init_app.sql "$CID":/tmp/init_app.sql
+    docker compose exec -T mariadb bash -lc 'mysql -uroot -p"$SQL_ROOT_PASSWORD" < /tmp/init_app.sql'
+  changed_when: false
+
+- block:
+    - name: Wait for services to be healthy - wordpress
+      args:
+        chdir: "{{ project_dir }}/srcs"
+        executable: /bin/bash
+      shell: |
+        set -e
+        CID=$(docker compose ps -q wordpress)
+        [ -n "$CID" ] && docker inspect -f '{{"{{"}}.State.Health.Status{{"}}"}}' "$CID" | grep -q healthy
+      register: wp_health
+      retries: 40
+      delay: 3
+      until: wp_health.rc == 0
+  rescue:
+    - name: Show wordpress logs on failure
+      args:
+        chdir: "{{ project_dir }}/srcs"
+      shell: docker compose logs --tail=300 wordpress | cat
+    - name: Show wordpress container status
+      args:
+        chdir: "{{ project_dir }}/srcs"
+      shell: docker compose ps wordpress | cat
+    - name: Fail with wordpress health check error
+      fail:
+        msg: "WordPress health check failed after 40 retries"
 
 - name: Show compose status
   shell: |
