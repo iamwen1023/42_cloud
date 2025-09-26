@@ -11,11 +11,10 @@ RUN mkdir -p /var/run/nginx /var/www/wordpress
 
 COPY conf/nginx.conf /etc/nginx/nginx.conf
 COPY tools/create_htpasswd.sh /usr/local/bin/create_htpasswd.sh
+COPY tools/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN chmod 755 /var/www && chown -R www-data:www-data /var/www
-RUN chmod +x /usr/local/bin/create_htpasswd.sh
+RUN chmod +x /usr/local/bin/create_htpasswd.sh /usr/local/bin/entrypoint.sh
 
-# Create htpasswd file for PHP-MyAdmin authentication
-RUN /usr/local/bin/create_htpasswd.sh
-
-CMD [ "nginx", "-g", "daemon off;" ]
+# Use runtime entrypoint to generate credentials and start Nginx
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

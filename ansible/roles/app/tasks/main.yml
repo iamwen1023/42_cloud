@@ -26,7 +26,7 @@
 
 - name: Copy project files
   synchronize:
-    src: "{{ playbook_dir }}/.."
+    src: "{{ (playbook_dir + '/..') | realpath }}/"
     dest: "{{ project_dir }}"
     rsync_opts:
       - "--exclude=.git"
